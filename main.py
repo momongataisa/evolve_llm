@@ -177,6 +177,11 @@ def main():
         default="./merged_models",
         help="Cache directory for merged models"
     )
+    parser.add_argument(
+        "--no-save-merged-models",
+        action='store_true',
+        help="Do not save intermediate merged models (saves disk space, disables caching)"
+    )
 
     # Output arguments
     parser.add_argument(
@@ -238,10 +243,14 @@ def main():
 
     # Initialize merger
     logger.info("Initializing model merger")
+    save_merged = not args.no_save_merged_models
+    if not save_merged:
+        logger.info("Merged models will NOT be saved (using temporary directories)")
     merger = LayerWiseMerger(
         model_paths=args.models,
         cache_dir=args.cache_dir,
-        merge_method=args.merge_method
+        merge_method=args.merge_method,
+        save_merged_models=save_merged
     )
 
     # Initialize evaluator

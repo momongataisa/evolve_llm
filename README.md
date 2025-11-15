@@ -84,7 +84,8 @@ python main.py \
 
 #### マージ設定
 - `--merge-method`: マージ手法（linear, slerp, ties, dare）
-- `--cache-dir`: マージ済みモデルのキャッシュディレクトリ
+- `--cache-dir`: マージ済みモデルのキャッシュディレクトリ（デフォルト: `./merged_models`）
+- `--no-save-merged-models`: 中間マージモデルを保存しない（ディスク容量を節約、キャッシング無効）
 
 #### その他
 - `--output-dir`: 出力ディレクトリ
@@ -131,6 +132,7 @@ python main.py \
   --output-dir ./output/full_eval \
   --save-best \
   --early-stopping 7
+  --no-save-merged-models
 ```
 
 ### 例4: Python APIの使用
@@ -175,29 +177,230 @@ print(f"Best fitness: {best_individual.fitness}")
 各個体は、モデルの全レイヤーについて、マージする各モデルの重み（按分率）を持ちます。
 
 ```python
-# 例: 2モデル、3レイヤーの場合
+# 例: 2モデル、24レイヤーの場合
 genes = [
     [0.7, 0.3],  # レイヤー0: モデル1が70%, モデル2が30%
-    [0.5, 0.5],  # レイヤー1: 均等
-    [0.3, 0.7],  # レイヤー2: モデル1が30%, モデル2が70%
+    [0.6, 0.4],  # レイヤー1: モデル1が60%, モデル2が40%
+    [0.5, 0.5],  # レイヤー2: 均等
+    ...
+    [0.3, 0.7],  # レイヤー23: モデル1が30%, モデル2が70%
 ]
 ```
 
+**重要な特徴：**
+- 形状: `(num_layers, num_models)` の2次元配列
+- 各レイヤーの重みの合計は必ず1.0
+- 初期化はランダムに生成
+
 ### 2. 進化のプロセス
 
-1. **初期化**: ランダムな按分率で個体を生成
-2. **評価**: 各個体をマージして性能評価
-3. **選択**: 高性能な個体を親として選択（トーナメント選択）
-4. **交叉**: 親の遺伝子を組み合わせて子を生成
-5. **突然変異**: ランダムに按分率を変動
-6. **次世代**: エリート保存 + 新個体で次世代を構成
-7. 2-6を繰り返す
+```
+初期集団生成 → [評価 → 選択 → 交叉 → 突然変異] × N世代 → 最良個体
+```
 
-### 3. 適応度評価
+#### ステップ1: 初期化
+ランダムな按分率で集団（population）を生成します。
 
+```python
+# 例：10個体の集団を生成
+population_size = 10
+individuals = [Individual(num_layers, num_models) for _ in range(10)]
+```
+
+#### ステップ2: 適応度評価
+
+各個体について以下を実行：
+1. **モデルマージ**: 個体の遺伝子に基づいてmergekitでモデルをマージ
+2. **性能評価**: マージされたモデルをベンチマークで評価
+3. **適応度スコア**: 評価結果を個体に保存
+
+評価モード：
 - **Full モード**: MMLU、HellaSwag、ARC等のベンチマークで評価
 - **Simple モード**: パープレキシティで簡易評価
 - **Mock モード**: テスト用のランダム評価
+
+#### ステップ3: 選択（Selection）
+
+次世代の親を選ぶ方法：
+
+**トーナメント選択**（デフォルト）:
+```python
+# ランダムに3個体選んで、最も適応度が高い個体を親に選ぶ
+tournament = random.choice(individuals, 3)
+parent = max(tournament, key=lambda x: x.fitness)
+```
+
+**ルーレット選択**（オプション）:
+```python
+# 適応度に比例した確率で選択
+probabilities = fitnesses / total_fitness
+parent = random.choice(individuals, p=probabilities)
+```
+
+#### ステップ4: 交叉（Crossover）
+
+2つの親から2つの子を生成（単一点交叉）：
+
+```python
+# 例：crossover_point = 12の場合
+crossover_point = random.randint(1, num_layers)
+
+offspring1 = [
+    parent1[0:12],    # 前半は親1から
+    parent2[12:24]    # 後半は親2から
+]
+
+offspring2 = [
+    parent2[0:12],    # 前半は親2から
+    parent1[12:24]    # 後半は親1から
+]
+```
+
+視覚化：
+```
+親1: [0.7,0.3][0.6,0.4][0.5,0.5]...|...[0.3,0.7][0.2,0.8]
+親2: [0.8,0.2][0.7,0.3][0.6,0.4]...|...[0.4,0.6][0.5,0.5]
+     ←------- 前半 -------→      ↑交叉点
+子1: [0.7,0.3][0.6,0.4][0.5,0.5]...|...[0.4,0.6][0.5,0.5]
+子2: [0.8,0.2][0.7,0.3][0.6,0.4]...|...[0.3,0.7][0.2,0.8]
+```
+
+交叉率（デフォルト80%）に従って、交叉するか親をそのままコピーするか決定します。
+
+#### ステップ5: 突然変異（Mutation）
+
+遺伝的多様性を保つために、ランダムに値を変更：
+
+```python
+for each layer:
+    if random() < mutation_rate:  # デフォルト10%の確率
+        # ガウスノイズを追加
+        noise = normal(0, mutation_strength)  # デフォルトstd=0.1
+        genes[layer] += noise
+
+        # [0,1]の範囲にクリップ
+        genes[layer] = clip(genes[layer], 0.0, 1.0)
+
+        # 合計が1.0になるように正規化
+        genes[layer] = genes[layer] / sum(genes[layer])
+```
+
+例：
+```
+変異前: [0.6, 0.4]
+ノイズ: [+0.05, -0.05]
+変異後: [0.65, 0.35]
+```
+
+#### ステップ6: エリート保存（Elitism）
+
+最良個体を次世代に無条件で引き継ぎます（デフォルト10%）：
+
+```python
+elitism_ratio = 0.1
+num_elites = int(population_size * 0.1)  # 例：10個体中1個体
+next_generation = best_individuals[:num_elites].copy()
+```
+
+これにより、世代交代で性能が悪化することを防ぎます。
+
+#### ステップ7: 次世代の構成
+
+```python
+next_generation = []
+
+# 1. エリート保存
+next_generation += elites
+
+# 2. 残りを選択・交叉・突然変異で埋める
+while len(next_generation) < population_size:
+    parent1 = select_tournament()
+    parent2 = select_tournament()
+    offspring1, offspring2 = crossover(parent1, parent2)
+    offspring1.mutate()
+    offspring2.mutate()
+    next_generation += [offspring1, offspring2]
+```
+
+### 3. 早期停止（Early Stopping）
+
+無駄な計算を避けるため、改善が見られなくなったら進化を停止：
+
+```python
+if best_fitness の改善なし for N世代:
+    進化を停止
+```
+
+例：`--early-stopping 7`を指定すると、7世代改善がなければ停止します。
+
+### 4. なぜレイヤーごとに按分するのか？
+
+LLMの各レイヤーは異なる役割を持ちます：
+
+- **浅いレイヤー**: 基本的な言語パターン、構文理解
+- **中間レイヤー**: 意味理解、文脈把握
+- **深いレイヤー**: 高度な推論、タスク固有の知識
+
+例えば、InstructモデルとBaseモデルをマージする場合：
+
+```python
+# 理想的なマージ比率の例
+genes = [
+    # 浅いレイヤー：Base寄り（基本的な言語能力を重視）
+    [0.3, 0.7],  # Instruct=30%, Base=70%
+    [0.4, 0.6],
+
+    # 中間レイヤー：バランス
+    [0.5, 0.5],
+    [0.5, 0.5],
+
+    # 深いレイヤー：Instruct寄り（指示追従能力を重視）
+    [0.7, 0.3],  # Instruct=70%, Base=30%
+    [0.8, 0.2],
+]
+```
+
+遺伝的アルゴリズムがこの**最適な組み合わせを自動で発見**します。
+
+### 5. 実際の進化の例
+
+```
+世代1:
+  個体1: fitness=0.45 (ランダム)
+  個体2: fitness=0.52 (ランダム) ← 最良
+  ...
+  平均: 0.48
+
+世代2:（選択・交叉・突然変異後）
+  個体1: fitness=0.52 (エリート保存)
+  個体2: fitness=0.54 ← 新たな最良！
+  ...
+  平均: 0.51 ← 改善傾向
+
+世代3:
+  個体1: fitness=0.54 (エリート保存)
+  個体2: fitness=0.56 ← さらに改善！
+  ...
+  平均: 0.53
+
+...（繰り返し）
+
+世代15:
+  最良個体: fitness=0.68
+  → このマージ比率を最終モデルとして保存
+```
+
+### 6. パラメータチューニングのヒント
+
+**探索重視（多様性）：**
+- `mutation_rate`を高く（0.2-0.3）
+- `population_size`を大きく（20-30）
+- `tournament_size`を小さく（2）
+
+**収束重視（精度）：**
+- `mutation_rate`を低く（0.05-0.1）
+- `elitism_ratio`を高く（0.2-0.3）
+- `tournament_size`を大きく（4-5）
 
 ## 出力
 
@@ -232,6 +435,12 @@ genes = [
 2. **キャッシュの活用**: `--cache-dir`で同じマージを再利用
 3. **早期停止**: `--early-stopping`で無駄な世代をスキップ
 4. **集団サイズ**: 小さい`--population-size`から始める
+
+### ディスク容量の最適化
+
+- `--no-save-merged-models`を使用して中間マージモデルを保存しない
+  - 注意：キャッシングが無効になるため、実行時間は長くなる可能性あり
+  - 最良モデル（`--save-best`）は影響を受けず保存される
 
 ### メモリ最適化
 

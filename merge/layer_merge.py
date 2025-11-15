@@ -21,7 +21,8 @@ class LayerWiseMerger:
         model_paths: List[str],
         cache_dir: Optional[str] = None,
         use_gpu: bool = True,
-        merge_method: str = "linear"
+        merge_method: str = "linear",
+        save_merged_models: bool = True
     ):
         """
         Initialize the merger.
@@ -31,13 +32,17 @@ class LayerWiseMerger:
             cache_dir: Directory for caching merged models
             use_gpu: Whether to use GPU for merging
             merge_method: Merge method to use
+            save_merged_models: Whether to save merged models (if False, uses temp dir and deletes after evaluation)
         """
         self.model_paths = model_paths
+        self.save_merged_models = save_merged_models
         self.cache_dir = Path(cache_dir) if cache_dir else Path("./merged_models")
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        if save_merged_models:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.use_gpu = use_gpu
         self.merge_method = merge_method
         self.config_generator = MergeConfigGenerator(model_paths)
+        self._temp_dirs = []  # Track temporary directories for cleanup
 
     def merge(
         self,
@@ -64,11 +69,17 @@ class LayerWiseMerger:
         """
         # Generate output path if not provided
         if output_path is None:
-            output_path = self.cache_dir / f"merged_gen{hash(individual.genes.tobytes()) % 100000}"
+            if self.save_merged_models:
+                output_path = self.cache_dir / f"merged_gen{hash(individual.genes.tobytes()) % 100000}"
+            else:
+                # Use temporary directory if not saving models
+                temp_dir = tempfile.mkdtemp(prefix="merged_model_")
+                self._temp_dirs.append(temp_dir)
+                output_path = Path(temp_dir) / "model"
         output_path = Path(output_path)
 
-        # Check if already merged
-        if output_path.exists() and (output_path / "config.json").exists():
+        # Check if already merged (only if saving models)
+        if self.save_merged_models and output_path.exists() and (output_path / "config.json").exists():
             logger.info(f"Using cached merged model at {output_path}")
             return str(output_path)
 
@@ -177,3 +188,19 @@ class LayerWiseMerger:
         for old_dir in merged_dirs[keep_best:]:
             logger.info(f"Removing old merged model: {old_dir}")
             shutil.rmtree(old_dir)
+
+    def cleanup_temp_dirs(self):
+        """Clean up temporary directories created for unsaved models."""
+        for temp_dir in self._temp_dirs:
+            if Path(temp_dir).exists():
+                logger.info(f"Cleaning up temporary model directory: {temp_dir}")
+                try:
+                    shutil.rmtree(temp_dir)
+                except Exception as e:
+                    logger.warning(f"Failed to remove temp dir {temp_dir}: {e}")
+        self._temp_dirs = []
+
+    def __del__(self):
+        """Cleanup temporary directories on object destruction."""
+        if not self.save_merged_models:
+            self.cleanup_temp_dirs()
