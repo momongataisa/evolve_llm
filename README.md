@@ -458,12 +458,38 @@ genes = [
 
 ## 対応モデル
 
-同一アーキテクチャのモデルであればマージ可能です:
+**重要**: 同一アーキテクチャ・同一サイズのモデルのみマージ可能です！
 
-- Qwen2.5シリーズ
-- Llama系モデル
-- Mistral系モデル
-- その他のCausal LM
+### ✅ マージ可能な組み合わせ
+
+- Qwen2.5-7B × Qwen2.5-7B-Instruct
+- Llama2-7B × Llama2-7B-chat
+- Mistral-7B × Mistral-7B-Instruct
+- 同じベースモデルのファインチューン同士
+
+### ❌ マージ不可能な組み合わせ
+
+- FinGPT (Llama2ベース) × Qwen2.5（異なるアーキテクチャ）
+- Llama2-7B × Llama2-13B（異なるサイズ）
+- 異なるモデルタイプ
+
+### 金融モデルを使う場合
+
+FinGPTなどのLoRAモデルは、先にベースモデルにマージが必要です：
+
+```bash
+# ステップ1: LoRAをマージ（必要なライブラリ: pip install peft）
+python examples/lora_merge_example.py
+
+# ステップ2: 進化的マージ
+python main.py \
+  --models "./models/fingpt_merged" "meta-llama/Llama-2-7b-chat-hf" \
+  --eval-mode simple_multi_domain \
+  --financial-weight 0.6 \
+  --general-weight 0.4
+```
+
+**詳細**: [docs/MODEL_COMPATIBILITY.md](docs/MODEL_COMPATIBILITY.md) を参照
 
 ## パフォーマンスチューニング
 

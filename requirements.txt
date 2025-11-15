@@ -6,6 +6,7 @@ PyYAML>=6.0
 mergekit>=0.0.3
 torch>=2.0.0
 transformers>=4.30.0
+peft>=0.5.0  # For LoRA model merging
 
 # Evaluation
 lm-eval>=0.4.0
