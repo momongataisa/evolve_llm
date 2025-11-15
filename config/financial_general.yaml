@@ -1,0 +1,66 @@
+# Configuration for merging financial-specialized and general models
+# Example: FinGPT + Qwen2.5
+
+merge_config:
+  # Models to merge (replace with actual model paths)
+  models:
+    - "FinGPT/fingpt-mt_llama2-7b_lora"  # Financial specialized model
+    - "Qwen/Qwen2.5-7B-Instruct"         # General purpose model
+
+  # Number of layers (auto-detected if not specified)
+  num_layers: null
+
+  # Merge method
+  merge_method: "linear"  # Options: linear, slerp, ties, dare
+
+# Genetic Algorithm parameters
+ga_config:
+  population_size: 15
+  generations: 25
+  mutation_rate: 0.12
+  mutation_strength: 0.1
+  crossover_rate: 0.85
+  elitism_ratio: 0.15
+  tournament_size: 4
+  early_stopping_patience: 8
+
+# Multi-domain evaluation configuration
+evaluation:
+  mode: "multi_domain"  # Options: full, simple, mock, multi_domain
+
+  # Domain weights (should sum to 1.0 or will be normalized)
+  domains:
+    - name: "financial"
+      weight: 0.6  # 60% weight on financial tasks
+      tasks:
+        - "finqa"
+        - "convfinqa"
+        - "fiqa"
+        - "fpb"
+      num_fewshot: 3
+      limit: 100  # Limit for faster evaluation
+
+    - name: "general"
+      weight: 0.4  # 40% weight on general tasks
+      tasks:
+        - "arc_easy"
+        - "hellaswag"
+        - "winogrande"
+        - "mmlu"
+      num_fewshot: 5
+      limit: 100
+
+  # Evaluation device and batch size
+  device: "cuda"
+  batch_size: 8
+  normalization: "weighted"  # Options: weighted, average, max
+
+# Output configuration
+output:
+  output_dir: "./output/financial_general_merge"
+  cache_dir: "./cache/financial_general"
+  save_best: true
+  save_history: true
+
+# Other settings
+random_seed: 42

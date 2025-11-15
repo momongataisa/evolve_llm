@@ -6,6 +6,7 @@ Qwenなどの大規模言語モデル（LLM）を遺伝的アルゴリズムで�
 
 - **レイヤーごとの按分率最適化**: 各レイヤーで異なるマージ比率を設定し、最適な組み合わせを探索
 - **遺伝的アルゴリズム**: 進化的手法による効率的な探索
+- **マルチドメイン評価**: 金融特化モデル×汎用モデルなど、異なるドメインのモデルマージに対応
 - **柔軟な評価**: lm-evaluation-harnessを使った本格的な評価から、簡易評価、モックテストまで対応
 - **複数のマージ手法**: linear, slerp, ties, dareなど
 - **キャッシング**: マージ済みモデルと評価結果のキャッシュによる高速化
@@ -22,8 +23,11 @@ evolve_llm/
 │   ├── layer_merge.py     # レイヤーごとのマージ実行
 │   └── config_generator.py # mergekit設定生成
 ├── evaluation/            # 適応度評価
-│   └── fitness.py         # ベンチマーク評価
+│   ├── fitness.py         # ベンチマーク評価
+│   └── multi_domain.py    # マルチドメイン評価
+├── config/                # 設定ファイル
 ├── examples/              # 使用例
+├── docs/                  # ドキュメント
 └── main.py                # メインエントリーポイント
 ```
 
@@ -169,6 +173,40 @@ best_individual = ga.evolve(
 
 print(f"Best fitness: {best_individual.fitness}")
 ```
+
+### 例5: 金融特化モデル × 汎用モデル（マルチドメインマージ）
+
+異なるドメインのモデルを最適にマージ：
+
+```bash
+# 簡易評価版（推奨）
+python main.py \
+  --models "FinGPT/fingpt-forecaster_dow30_llama2-7b_lora" "Qwen/Qwen2.5-7B-Instruct" \
+  --eval-mode simple_multi_domain \
+  --financial-weight 0.6 \
+  --general-weight 0.4 \
+  --population-size 12 \
+  --generations 20 \
+  --output-dir ./output/financial_general \
+  --save-best
+
+# 本格評価版
+python main.py \
+  --models "FinGPT/fingpt-forecaster_dow30_llama2-7b_lora" "Qwen/Qwen2.5-7B-Instruct" \
+  --eval-mode multi_domain \
+  --financial-weight 0.6 \
+  --general-weight 0.4 \
+  --financial-tasks finqa convfinqa fiqa fpb \
+  --general-tasks arc_easy hellaswag winogrande mmlu \
+  --eval-limit 100 \
+  --population-size 15 \
+  --generations 25 \
+  --output-dir ./output/financial_general_full \
+  --save-best \
+  --early-stopping 8
+```
+
+**詳細**: [docs/MULTI_DOMAIN_MERGING.md](docs/MULTI_DOMAIN_MERGING.md) を参照
 
 ## 仕組み
 

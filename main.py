@@ -9,7 +9,16 @@ import sys
 
 from genetic_algorithm import GeneticAlgorithm, Individual
 from merge import LayerWiseMerger
-from evaluation import FitnessEvaluator, BenchmarkConfig, SimpleFitnessEvaluator, MockFitnessEvaluator
+from evaluation import (
+    FitnessEvaluator,
+    BenchmarkConfig,
+    SimpleFitnessEvaluator,
+    MockFitnessEvaluator,
+    MultiDomainFitnessEvaluator,
+    SimpleMultiDomainEvaluator,
+    MultiDomainConfig,
+    DomainConfig
+)
 
 
 # Setup logging
@@ -141,9 +150,10 @@ def main():
     # Evaluation arguments
     parser.add_argument(
         "--eval-mode",
-        choices=['full', 'simple', 'mock'],
+        choices=['full', 'simple', 'mock', 'multi_domain', 'simple_multi_domain'],
         default='simple',
-        help="Evaluation mode: full (lm-eval), simple (perplexity), mock (testing)"
+        help="Evaluation mode: full (lm-eval), simple (perplexity), mock (testing), "
+             "multi_domain (multi-domain with lm-eval), simple_multi_domain (multi-domain simple)"
     )
     parser.add_argument(
         "--tasks",
@@ -162,6 +172,32 @@ def main():
         type=int,
         default=None,
         help="Limit number of evaluation examples for faster testing"
+    )
+
+    # Multi-domain evaluation arguments
+    parser.add_argument(
+        "--financial-weight",
+        type=float,
+        default=0.6,
+        help="Weight for financial domain tasks (default: 0.6)"
+    )
+    parser.add_argument(
+        "--general-weight",
+        type=float,
+        default=0.4,
+        help="Weight for general domain tasks (default: 0.4)"
+    )
+    parser.add_argument(
+        "--financial-tasks",
+        nargs='+',
+        default=["finqa", "convfinqa", "fiqa", "fpb"],
+        help="Financial domain tasks"
+    )
+    parser.add_argument(
+        "--general-tasks",
+        nargs='+',
+        default=["arc_easy", "hellaswag", "winogrande", "mmlu"],
+        help="General domain tasks"
     )
 
     # Merge arguments
@@ -264,6 +300,41 @@ def main():
         evaluator = FitnessEvaluator(benchmark_config)
     elif args.eval_mode == 'simple':
         evaluator = SimpleFitnessEvaluator()
+    elif args.eval_mode == 'multi_domain':
+        # Multi-domain evaluation with lm-eval
+        multi_domain_config = MultiDomainConfig.create_financial_general(
+            financial_weight=args.financial_weight,
+            general_weight=args.general_weight,
+            limit=args.eval_limit
+        )
+        # Override tasks if specified
+        if args.financial_tasks:
+            multi_domain_config.domains[0].tasks = args.financial_tasks
+        if args.general_tasks:
+            multi_domain_config.domains[1].tasks = args.general_tasks
+
+        evaluator = MultiDomainFitnessEvaluator(multi_domain_config)
+        logger.info(f"Multi-domain weights: Financial={args.financial_weight}, General={args.general_weight}")
+    elif args.eval_mode == 'simple_multi_domain':
+        # Simple multi-domain evaluation (faster, no lm-eval)
+        financial_domain = DomainConfig(
+            name="financial",
+            tasks=args.financial_tasks,
+            weight=args.financial_weight,
+            num_fewshot=3,
+            limit=args.eval_limit
+        )
+        general_domain = DomainConfig(
+            name="general",
+            tasks=args.general_tasks,
+            weight=args.general_weight,
+            num_fewshot=5,
+            limit=args.eval_limit
+        )
+        evaluator = SimpleMultiDomainEvaluator(
+            domain_configs=[financial_domain, general_domain]
+        )
+        logger.info(f"Simple multi-domain weights: Financial={args.financial_weight}, General={args.general_weight}")
     else:  # mock
         evaluator = MockFitnessEvaluator()
 
