@@ -92,7 +92,7 @@ class LayerWiseMerger:
             individual,
             str(config_path),
             merge_method=self.merge_method,
-            simple=True  # Use simple config for compatibility
+            simple=False  # Use layer-wise config for true genetic optimization
         )
 
         # Run mergekit
